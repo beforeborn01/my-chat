@@ -6,11 +6,9 @@
 
 ## 一次性初始化（首次部署）
 
-前提：本地仓库已有提交并 push 到 `origin/main`，且**本机 SSH agent 已加载能访问该 GitHub 仓库的 key**（`release.sh init` 会用 `ssh -A` 把 agent 转发到 ECS，让它能 `git clone`）。
+前提：本地仓库已 push 到 `origin/main`，且 **ECS 上已有能访问该 GitHub 仓库的 SSH key**（已确认）。
 
 ```bash
-ssh-add ~/.ssh/id_ed25519     # 或者你 push GitHub 用的 key（一次即可）
-
 cd /Users/bc/code/ai/my-chat
 ./scripts/release.sh init
 ```
@@ -18,7 +16,7 @@ cd /Users/bc/code/ai/my-chat
 脚本会：
 
 1. 本地预检：HEAD 干净、已 push 到 `origin/main`
-2. ssh -A 到 ECS，用本机 agent key 做 `git clone git@github.com:beforeborn01/my-chat.git → /root/my-chat`
+2. ssh 到 ECS，执行 `git clone git@github.com:beforeborn01/my-chat.git → /root/my-chat`（用 ECS 端的 GitHub key）
 3. 在 ECS 跑 `./scripts/deploy.sh init`：
    - 复制 `.env.prod.example → .env`
    - 写入 `YUN_API_KEY`（从本机 `.env` 读，没读到则保留占位）
@@ -83,6 +81,6 @@ cd /root/my-chat
 | 502 / 浏览器连不上 | `./scripts/release.sh logs`；安全组 8091 是否放开 |
 | 登录后立即跳回登录页 | `SESSION_SECRET` 重启后变了，cookie 失效；让用户重新输入 |
 | 图片生成报错 | 上游 `gpt-image-2` 偶发 502；后端最长重试 100s 才放弃 |
-| `release.sh init` 卡在 git clone | 本机 agent 未加载 GitHub key（`ssh-add`），或 ECS 没装 git |
+| `release.sh init` 卡在 git clone | ECS 端的 GitHub key 失效或没权限读这个 repo |
 | 容器起不来 | `.env` 缺 `YUN_API_KEY` 或 `SESSION_SECRET` |
-| `git pull` 在 ECS 失败 | ECS 端无法访问 GitHub；首次 init 完成后，ECS 已经有了 origin remote 和 git 配置，不需要再做 agent forwarding（除非改密钥/换主机） |
+| `git pull` 在 ECS 失败 | ECS 端 GitHub key 失效；用 `./scripts/release.sh ssh` 进去手动 `git pull` 看具体错误 |

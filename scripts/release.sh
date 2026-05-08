@@ -58,7 +58,6 @@ err()  { printf '\033[31m[release][ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 ok()   { printf '\033[32m[release][✓]\033[0m %s\n' "$*"; }
 
 ssh_ecs()  { ssh -i "${ECS_KEY}" -o ConnectTimeout=15 "${ECS_HOST}" "$@"; }
-sshA_ecs() { ssh -A -i "${ECS_KEY}" -o ConnectTimeout=15 "${ECS_HOST}" "$@"; }
 sshq_ecs() { ssh -i "${ECS_KEY}" -o ConnectTimeout=15 -o BatchMode=yes "${ECS_HOST}" "$@"; }
 
 precheck_ssh() {
@@ -83,8 +82,8 @@ local_git_checks() {
 
 remote_init() {
   log "ECS：首次部署（git clone + ./scripts/deploy.sh init）"
-  # ssh -A 转发本机 SSH agent，以便 ECS 端用本机的 GitHub key 认证 clone
-  sshA_ecs bash -s <<EOF
+  # ECS 端已有 GitHub key，直接 clone
+  ssh_ecs bash -s <<EOF
 set -euo pipefail
 mkdir -p "\$(dirname '${ECS_PROJECT_DIR}')"
 if [ -d '${ECS_PROJECT_DIR}/.git' ]; then
