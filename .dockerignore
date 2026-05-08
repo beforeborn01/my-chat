@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.env
+.env.*
+data
+images
+.git
+.gitignore
+.DS_Store
+*.log
+node_modules
+.claude

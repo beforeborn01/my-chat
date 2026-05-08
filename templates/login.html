@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>登录 · My Chat</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <h1>My Chat</h1>
+    <p class="muted">输入用户名进入，无需密码。同名即同账号，会自动恢复历史会话。</p>
+    {% if error %}<div class="error" style="margin-bottom:12px">{{ error }}</div>{% endif %}
+    <form method="post" action="/login{% if request.args.get('next') %}?next={{ request.args.get('next') }}{% endif %}">
+      <input
+        type="text"
+        name="username"
+        placeholder="用户名（1-32 位，支持中文/英文/数字/_/-）"
+        autofocus
+        required
+        maxlength="32"
+        autocomplete="username"
+      />
+      <button type="submit">进入</button>
+    </form>
+  </main>
+</body>
+</html>

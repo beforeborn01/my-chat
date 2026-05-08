@@ -1,0 +1,36 @@
+# my-chat 生产部署 docker-compose
+#
+# 单服务：Flask (gunicorn) 容器对外暴露 ${WEB_PORT:-8091} → 容器 8080
+# 数据持久化：./data 目录挂进容器（SQLite + 生成的图片）
+#
+# 用法：
+#   cp .env.prod.example .env
+#   # 修改 .env 里的 YUN_API_KEY / SESSION_SECRET
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#   docker compose -f docker-compose.prod.yml logs -f app
+#   浏览器访问：http://<ECS 公网 IP>:8091
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: my-chat:latest
+    restart: unless-stopped
+    environment:
+      YUN_API_KEY: ${YUN_API_KEY:?YUN_API_KEY required}
+      YUN_API_BASE: ${YUN_API_BASE:-https://api.yun-apis.com/v1}
+      CHAT_MODEL: ${CHAT_MODEL:-gpt-5.5}
+      IMAGE_MODEL: ${IMAGE_MODEL:-gpt-image-2}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET required (>= 32 chars)}
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "${WEB_PORT:-8091}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz', timeout=3).read().startswith(b'ok') else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s

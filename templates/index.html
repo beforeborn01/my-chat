@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>My Chat · gpt-5.5 + gpt-image-2</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="app-body">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <div class="brand">My Chat</div>
+      <button id="newChat" class="primary">＋ 新会话</button>
+    </div>
+    <div id="convList" class="conv-list"></div>
+    <div class="sidebar-foot">
+      <span class="user-pill" title="当前用户">👤 {{ username }}</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button class="ghost" type="submit">退出</button>
+      </form>
+    </div>
+  </aside>
+
+  <section class="main">
+    <header class="topbar">
+      <div id="convTitle" class="conv-title">新会话</div>
+      <div class="hint">想画图就直说，比如"画一只戴墨镜的橘猫"。</div>
+    </header>
+
+    <main id="chat" class="chat"></main>
+
+    <form id="composer" class="composer">
+      <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" autocomplete="off"></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+  </section>
+
+  <div id="lightbox" class="lightbox hidden" aria-hidden="true">
+    <button class="lightbox-close" aria-label="关闭">×</button>
+    <img id="lightboxImg" alt="" />
+  </div>
+
+  <script>window.__USERNAME__ = {{ username|tojson }};</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
