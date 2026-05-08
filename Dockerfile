@@ -8,7 +8,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+# 国内 ECS 直连 pypi.org 经常超时，强制走清华镜像
+RUN pip install \
+      --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+      --trusted-host pypi.tuna.tsinghua.edu.cn \
+      --timeout 60 \
+      --retries 5 \
+      -r requirements.txt
 
 COPY app.py auth.py db.py ./
 COPY templates ./templates
