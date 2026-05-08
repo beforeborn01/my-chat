@@ -8,9 +8,34 @@ const lightboxImg = document.getElementById("lightboxImg");
 const lightboxClose = document.querySelector(".lightbox-close");
 const convListEl = document.getElementById("convList");
 const convTitleEl = document.getElementById("convTitle");
+const sidebarEl = document.querySelector(".sidebar");
+const sidebarScrim = document.getElementById("sidebarScrim");
+const menuBtn = document.getElementById("menuBtn");
 
 let busy = false;
 let currentConvId = null; // null = a fresh, unsaved conversation
+
+// ---------- mobile sidebar toggle ----------
+
+const isMobile = () => window.matchMedia("(max-width: 768px)").matches;
+
+function openSidebar() {
+  sidebarEl.classList.add("open");
+  sidebarScrim.classList.add("open");
+}
+function closeSidebar() {
+  sidebarEl.classList.remove("open");
+  sidebarScrim.classList.remove("open");
+}
+function maybeCloseSidebar() {
+  if (isMobile()) closeSidebar();
+}
+
+menuBtn?.addEventListener("click", () => {
+  if (sidebarEl.classList.contains("open")) closeSidebar();
+  else openSidebar();
+});
+sidebarScrim?.addEventListener("click", closeSidebar);
 
 function autosize() {
   input.style.height = "auto";
@@ -27,6 +52,7 @@ input.addEventListener("keydown", (e) => {
 newChatBtn.addEventListener("click", () => {
   if (busy) return;
   startFreshConversation();
+  maybeCloseSidebar();
 });
 
 lightboxClose.addEventListener("click", closeLightbox);
@@ -86,7 +112,10 @@ async function refreshConversations(selectId) {
     });
     item.appendChild(del);
 
-    item.addEventListener("click", () => loadConversation(c.id));
+    item.addEventListener("click", () => {
+      loadConversation(c.id);
+      maybeCloseSidebar();
+    });
     convListEl.appendChild(item);
   }
 }

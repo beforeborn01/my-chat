@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0f1115" />
 <title>My Chat · gpt-5.5 + gpt-image-2</title>
 <link rel="stylesheet" href="/static/style.css" />
 </head>
@@ -21,8 +23,11 @@
     </div>
   </aside>
 
+  <div id="sidebarScrim" class="sidebar-scrim" aria-hidden="true"></div>
+
   <section class="main">
     <header class="topbar">
+      <button id="menuBtn" class="menu-btn" aria-label="打开会话列表">☰</button>
       <div id="convTitle" class="conv-title">新会话</div>
       <div class="hint">想画图就直说，比如"画一只戴墨镜的橘猫"。</div>
     </header>
