@@ -333,9 +333,10 @@ async function send(message) {
     body.classList.remove("cursor");
     busy = false;
     sendBtn.disabled = false;
-    input.value = "";
-    autosize();
-    input.focus();
+    // Don't clear input here — submit handler already did it, and the user
+    // may have started typing the next message while we streamed.
+    // Don't refocus on mobile — would re-pop the iOS keyboard.
+    if (!isMobile()) input.focus();
     refreshConversations(currentConvId);
   }
 }
@@ -386,8 +387,12 @@ function renderImage(container, url, prompt) {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  if (busy) return;
   const v = input.value.trim();
   if (!v) return;
+  // Clear immediately so the user can type the next message while we stream.
+  input.value = "";
+  autosize();
   send(v);
 });
 
