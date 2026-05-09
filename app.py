@@ -49,6 +49,7 @@ IMAGES_DIR = DATA_DIR / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024  # 12 MB per upload
 db.init()
 
 
@@ -213,6 +214,89 @@ def generate_image(prompt: str, dest_dir: Path, url_prefix: str, size: str = "10
     yield _sse({"type": "done", "full_text": ""})
 
 
+def edit_image(prompt: str, input_path: str, dest_dir: Path, url_prefix: str, size: str = "1024x1024"):
+    """Yield SSE events; calls /v1/images/edits with the uploaded image.
+
+    Same retry budget as generate_image. Uses multipart/form-data.
+    """
+    yield _sse({"type": "status", "message": f"正在用 {IMAGE_MODEL} 编辑图片（最长等 {IMAGE_MAX_WAIT_SECONDS}s）…"})
+
+    try:
+        with open(input_path, "rb") as f:
+            image_bytes = f.read()
+    except OSError as e:
+        yield _sse({"type": "error", "message": f"无法读取上传图片：{e}"})
+        yield _sse({"type": "done", "full_text": ""})
+        return
+
+    deadline = time.monotonic() + IMAGE_MAX_WAIT_SECONDS
+    last_err = None
+    attempt = 0
+
+    while time.monotonic() < deadline:
+        attempt += 1
+        remaining = deadline - time.monotonic()
+        per_call_timeout = max(5.0, remaining)
+
+        try:
+            r = requests.post(
+                f"{API_BASE}/images/edits",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                files={"image": ("input.png", image_bytes, "image/png")},
+                data={"model": IMAGE_MODEL, "prompt": prompt, "n": "1", "size": size},
+                timeout=per_call_timeout,
+            )
+        except requests.RequestException as e:
+            last_err = f"network error: {e}"
+            if time.monotonic() + 1.5 >= deadline:
+                break
+            time.sleep(1.5)
+            continue
+
+        if r.status_code == 200:
+            try:
+                body = r.json()
+            except ValueError:
+                last_err = f"non-JSON response: {r.text[:200]}"
+                break
+            saved = _persist_image(body, dest_dir, url_prefix)
+            if not saved:
+                last_err = f"unexpected image response shape: {str(body)[:300]}"
+                break
+            url, fs_path = saved
+            yield _sse({"type": "image", "url": url, "prompt": prompt, "fs_path": fs_path})
+            yield _sse({"type": "done", "full_text": ""})
+            return
+
+        last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+        if r.status_code < 500:
+            break
+        backoff = min(2.0 * attempt, 8.0)
+        if time.monotonic() + backoff >= deadline:
+            break
+        time.sleep(backoff)
+
+    yield _sse({"type": "error", "message": f"图片编辑失败：{last_err or '超时'}"})
+    yield _sse({"type": "done", "full_text": ""})
+
+
+def _save_uploaded_image(upload, dest_dir: Path, url_prefix: str):
+    """Save a Flask FileStorage upload to disk; return (url, fs_path)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    fn = (upload.filename or "image").lower()
+    ext = ".png"
+    if fn.endswith((".jpg", ".jpeg")):
+        ext = ".jpg"
+    elif fn.endswith(".webp"):
+        ext = ".webp"
+    elif fn.endswith(".gif"):
+        ext = ".gif"
+    name = f"in_{int(time.time())}-{uuid.uuid4().hex[:8]}{ext}"
+    path = dest_dir / name
+    upload.save(path)
+    return f"{url_prefix}/{name}", str(path)
+
+
 def _persist_image(body: dict, dest_dir: Path, url_prefix: str):
     items = body.get("data") or []
     if not items:
@@ -351,38 +435,72 @@ def api_conversation(conv_id: int):
 @auth.login_required
 def api_send():
     me = auth.current_user()
-    body = request.get_json(force=True) or {}
-    message = (body.get("message") or "").strip()
+
+    is_multipart = (request.content_type or "").startswith("multipart/form-data")
+
+    if is_multipart:
+        message = (request.form.get("message") or "").strip()
+        conv_id_raw = request.form.get("conversation_id")
+        upload = request.files.get("image")
+    else:
+        body = request.get_json(force=True, silent=True) or {}
+        message = (body.get("message") or "").strip()
+        conv_id_raw = body.get("conversation_id")
+        upload = None
+
     if not message:
         return jsonify({"error": "empty message"}), 400
+    if upload and not (upload.mimetype or "").startswith("image/"):
+        return jsonify({"error": "uploaded file is not an image"}), 400
 
-    conv_id = body.get("conversation_id")
-    if not conv_id:
-        conv_id = db.create_conversation(me, _derive_title(message))
-    else:
-        conv = db.get_conversation(int(conv_id), me)
+    # Resolve conversation
+    conv_id = None
+    if conv_id_raw and str(conv_id_raw) not in ("null", "None", ""):
+        try:
+            conv = db.get_conversation(int(conv_id_raw), me)
+        except (TypeError, ValueError):
+            conv = None
         if not conv:
             return jsonify({"error": "conversation not found"}), 404
         conv_id = conv["id"]
-        # If conv title is still the default, retitle from this first user message.
         if conv["title"] == "新会话":
             db.rename_conversation(conv_id, me, _derive_title(message))
+    if not conv_id:
+        conv_id = db.create_conversation(me, _derive_title(message))
 
-    intent = classify_intent(message)
+    # Save the uploaded image (if any) BEFORE streaming so the user message
+    # carries its URL.
+    dest = IMAGES_DIR / me / str(conv_id)
+    url_prefix = f"/images/{me}/{conv_id}"
+    input_url = None
+    input_path = None
+    if upload:
+        input_url, input_path = _save_uploaded_image(upload, dest, url_prefix)
+
+    # Decide intent. Attaching an image always means edit — skip the LLM classifier.
+    if upload:
+        intent = "image_edit"
+    else:
+        intent = classify_intent(message)
+
     history = db.text_history_for_llm(conv_id, limit=20) if intent == "text" else []
 
     # Persist the user turn before streaming back.
-    db.add_message(conv_id, "user", content=message, intent=None)
+    db.add_message(conv_id, "user", content=message, intent=None, image_path=input_url)
 
     def gen():
         yield _sse({"type": "intent", "intent": intent, "conversation_id": conv_id})
+        if input_url:
+            yield _sse({"type": "user_image", "url": input_url})
 
-        if intent == "image":
-            dest = IMAGES_DIR / me / str(conv_id)
-            url_prefix = f"/images/{me}/{conv_id}"
+        if intent in ("image", "image_edit"):
             captured: dict[str, str] = {}
-            for ev in generate_image(message, dest, url_prefix):
-                # Inspect each event so we can capture the saved URL for DB.
+            stream = (
+                edit_image(message, input_path, dest, url_prefix)
+                if intent == "image_edit"
+                else generate_image(message, dest, url_prefix)
+            )
+            for ev in stream:
                 try:
                     line = ev.decode("utf-8")
                     payload = json.loads(line[5:].strip())
@@ -394,7 +512,9 @@ def api_send():
             db.add_message(
                 conv_id,
                 "assistant",
-                content="" if captured.get("url") else "(image generation failed)",
+                content=""
+                if captured.get("url")
+                else ("(image edit failed)" if intent == "image_edit" else "(image generation failed)"),
                 intent="image",
                 image_path=captured.get("url"),
             )
@@ -422,6 +542,11 @@ def api_send():
             "Content-Type": "text/event-stream; charset=utf-8",
         },
     )
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    return jsonify({"error": "图片过大（上限 12 MB）"}), 413
 
 
 # ---------- health ----------

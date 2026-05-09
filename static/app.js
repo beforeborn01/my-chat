@@ -11,9 +11,46 @@ const convTitleEl = document.getElementById("convTitle");
 const sidebarEl = document.querySelector(".sidebar");
 const sidebarScrim = document.getElementById("sidebarScrim");
 const menuBtn = document.getElementById("menuBtn");
+const attachBtn = document.getElementById("attachBtn");
+const fileInput = document.getElementById("fileInput");
+const attachPreview = document.getElementById("attachPreview");
+const attachThumb = document.getElementById("attachThumb");
+const attachRemove = document.getElementById("attachRemove");
 
 let busy = false;
 let currentConvId = null; // null = a fresh, unsaved conversation
+let attachedFile = null;  // current File object (if user picked an image)
+const MAX_UPLOAD_BYTES = 11 * 1024 * 1024; // keep below backend's 12 MB cap
+
+function setAttachedFile(file) {
+  if (file && file.size > MAX_UPLOAD_BYTES) {
+    alert("图片太大（上限 11MB）");
+    return;
+  }
+  attachedFile = file || null;
+  if (attachedFile) {
+    attachThumb.src = URL.createObjectURL(attachedFile);
+    attachPreview.classList.remove("hidden");
+    attachBtn.classList.add("has-file");
+    if (!input.value) {
+      input.placeholder = "想怎么改这张图？例如：让按钮更突出，整体改深色";
+    }
+  } else {
+    if (attachThumb.src.startsWith("blob:")) URL.revokeObjectURL(attachThumb.src);
+    attachThumb.src = "";
+    attachPreview.classList.add("hidden");
+    attachBtn.classList.remove("has-file");
+    input.placeholder = "说点什么…（Enter 发送，Shift+Enter 换行）";
+    if (fileInput) fileInput.value = "";
+  }
+}
+
+attachBtn?.addEventListener("click", () => fileInput?.click());
+fileInput?.addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) setAttachedFile(f);
+});
+attachRemove?.addEventListener("click", () => setAttachedFile(null));
 
 // ---------- mobile sidebar toggle ----------
 
@@ -165,18 +202,31 @@ function renderHistoryMessage(m) {
   }
   const body = document.createElement("div");
   node.bubble.appendChild(body);
+
+  // User-uploaded image renders as an inline thumbnail above the prompt.
+  if (m.role === "user" && m.image_path) {
+    const img = document.createElement("img");
+    img.className = "attached-image";
+    img.src = m.image_path;
+    img.loading = "lazy";
+    img.addEventListener("click", () => openLightbox(m.image_path));
+    body.appendChild(img);
+  }
+
   if (m.content) {
     const span = document.createElement("span");
     span.className = "text";
     span.textContent = m.content;
     body.appendChild(span);
   }
-  if (m.image_path) {
+
+  // Assistant-generated/edited image renders as a full image card.
+  if (m.role === "assistant" && m.image_path) {
     renderImage(body, m.image_path, "");
   } else if (m.role === "assistant" && m.intent === "image" && !m.image_path) {
     const e = document.createElement("div");
     e.className = "error";
-    e.textContent = "❌ 这条图片生成当时失败了";
+    e.textContent = "❌ 这条图片当时失败了";
     body.appendChild(e);
   }
 }
@@ -239,14 +289,26 @@ function renderEmpty() {
   });
 }
 
-async function send(message) {
-  if (busy || !message.trim()) return;
+async function send(message, attachment) {
+  if (busy || (!message.trim() && !attachment)) return;
   busy = true;
   sendBtn.disabled = true;
   clearEmpty();
 
   const userMsg = makeMsg("user");
-  userMsg.bubble.textContent = message;
+  if (attachment) {
+    const img = document.createElement("img");
+    img.className = "attached-image";
+    img.src = URL.createObjectURL(attachment);
+    img.addEventListener("click", () => openLightbox(img.src));
+    userMsg.bubble.appendChild(img);
+  }
+  if (message) {
+    const span = document.createElement("span");
+    span.className = "text";
+    span.textContent = message;
+    userMsg.bubble.appendChild(span);
+  }
 
   const aiMsg = makeMsg("assistant");
   const meta = document.createElement("div");
@@ -261,11 +323,20 @@ async function send(message) {
   let acc = "";
 
   try {
-    const res = await fetch("/api/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, conversation_id: currentConvId }),
-    });
+    let res;
+    if (attachment) {
+      const fd = new FormData();
+      fd.append("message", message);
+      if (currentConvId) fd.append("conversation_id", String(currentConvId));
+      fd.append("image", attachment, attachment.name || "upload.png");
+      res = await fetch("/api/send", { method: "POST", body: fd });
+    } else {
+      res = await fetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, conversation_id: currentConvId }),
+      });
+    }
     if (res.status === 401) {
       window.location.href = "/login";
       return;
@@ -294,11 +365,17 @@ async function send(message) {
 
         if (obj.type === "intent") {
           aiMsg.wrap.classList.add(`intent-${obj.intent}`);
-          meta.textContent = obj.intent === "image" ? "正在生成图片…" : "回复中…";
+          meta.textContent =
+            obj.intent === "image" ? "正在生成图片…" :
+            obj.intent === "image_edit" ? "正在编辑图片…" :
+            "回复中…";
           if (obj.conversation_id && !currentConvId) {
             currentConvId = obj.conversation_id;
             refreshConversations(currentConvId);
           }
+        } else if (obj.type === "user_image") {
+          // Backend confirms user upload was saved; nothing to do — user bubble
+          // already shows a local blob URL.
         } else if (obj.type === "status") {
           const s = document.createElement("div");
           s.className = "status";
@@ -389,11 +466,17 @@ form.addEventListener("submit", (e) => {
   e.preventDefault();
   if (busy) return;
   const v = input.value.trim();
-  if (!v) return;
+  const f = attachedFile;
+  if (!v && !f) return;
+  if (f && !v) {
+    alert("请描述一下你想怎么修改这张图");
+    return;
+  }
   // Clear immediately so the user can type the next message while we stream.
   input.value = "";
   autosize();
-  send(v);
+  setAttachedFile(null);
+  send(v, f);
 });
 
 // boot
